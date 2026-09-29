@@ -25,13 +25,32 @@
 
 不要把传感器电源正极接到 USB-RS485 的信号端。
 
-## 安装
+## 安装（mamba / conda）
+
+使用独立环境 `modbus-force-reader`。在项目目录执行：
 
 ```bash
 cd /home/xyq/modbus-force-reader
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -e .
+mamba env create -f environment.yml
+conda activate modbus-force-reader
+python -m pip install --no-build-isolation --no-deps -e .
+```
+
+如果只安装了 conda，将 `mamba env create` 替换为 `conda env create` 即可。
+依赖由环境文件安装，最后一步把本项目及命令行入口安装到该环境。
+后续打开终端时先执行 `conda activate modbus-force-reader`。
+
+无需激活环境也可以运行：
+
+```bash
+mamba run -n modbus-force-reader modbus-force-reader --port /dev/ttyUSB0
+```
+
+已有环境更新配置后，在项目目录执行：
+
+```bash
+mamba env update -n modbus-force-reader -f environment.yml
+mamba run -n modbus-force-reader python -m pip install --no-build-isolation --no-deps -e .
 ```
 
 列出串口，确认 USB-RS485 对应的设备名：
@@ -109,5 +128,5 @@ modbus-force-reader --port /dev/ttyUSB0 --channel 6
 无需连接硬件即可运行协议与串口模拟测试：
 
 ```bash
-PYTHONPATH=src python3 -B -m unittest discover -s tests -v
+mamba run -n modbus-force-reader python -B -m unittest discover -s tests -v
 ```

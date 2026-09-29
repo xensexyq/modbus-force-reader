@@ -1,0 +1,10 @@
+name: modbus-force-reader
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pyserial=3.5
+  - pip
+  - setuptools>=68
+  - wheel
