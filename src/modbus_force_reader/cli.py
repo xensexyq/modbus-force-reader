@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 import time
 from datetime import datetime
@@ -65,12 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--scale",
         type=float,
-        default=1.0,
-        help="multiply the raw signed value by this display scale (default: 1)",
+        default=None,
+        help="explicit display multiplier; otherwise read device decimal position",
     )
     parser.add_argument(
-        "--unit", default="raw", help="display unit label, for example N or kg (default: raw)"
+        "--unit", default=None, help="explicit display unit; otherwise convert device unit to N"
     )
+    parser.add_argument("--raw", action="store_true", help="show raw counts without unit conversion")
     parser.add_argument(
         "--interval", type=float, default=0.1, help="poll interval in seconds (default: 0.1)"
     )
@@ -116,6 +118,12 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--interval cannot be negative")
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
+    if args.scale is not None and not math.isfinite(args.scale):
+        parser.error("--scale must be finite")
+    if not args.raw and (args.scale is None) != (args.unit is None):
+        parser.error("specify both --scale and --unit for a manual conversion")
+    if args.raw and (args.scale is not None or args.unit is not None):
+        parser.error("--raw cannot be combined with --scale or --unit")
 
     address = args.register + CHANNEL_REGISTER_STRIDE * (args.channel - 1)
     if not 0 <= address <= 0xFFFE:
@@ -125,6 +133,20 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
 
 def format_frame(frame: bytes) -> str:
     return " ".join(f"{byte:02X}" for byte in frame)
+
+
+def force_scale(status: int, unit_code: int) -> float:
+    """Convert device counts to newtons using its decimal position and unit.
+
+    Mass units use standard gravity (9.80665 m/s²) for equivalent force.
+    """
+    factors = {1: 0.00980665, 2: 9.80665, 3: 9806.65, 4: 1.0}
+    if unit_code not in factors:
+        raise RuntimeError(
+            f"设备单位未设置或不支持（{unit_code}）；请核实标定后指定 "
+            "--scale 和 --unit，或使用 --raw 查看原始值"
+        )
+    return factors[unit_code] * 10 ** -(status & 7)
 
 
 def run(args: argparse.Namespace, address: int) -> int:
@@ -145,21 +167,37 @@ def run(args: argparse.Namespace, address: int) -> int:
 
     try:
         with client:
+            scale, unit = args.scale, args.unit
+            if args.raw:
+                scale, unit = 1.0, "counts"
+            elif scale is None:
+                if args.register != DEFAULT_GROSS_WEIGHT_REGISTER:
+                    raise RuntimeError("自定义寄存器请明确指定 --scale 和 --unit，或使用 --raw")
+                offset = CHANNEL_REGISTER_STRIDE * (args.channel - 1)
+                status = client.read_holding_registers(offset + 8, 1).registers[0]
+                time.sleep(0.01)
+                unit_code = client.read_holding_registers(offset + 104, 1).registers[0]
+                scale, unit = force_scale(status, unit_code), "N"
+                print(f"自动换算：设备单位代码={unit_code}，小数位={status & 7}，每计数={scale:g} N", flush=True)
+                if unit_code != 4:
+                    print("质量单位按标准重力 9.80665 m/s² 换算为等效力。", flush=True)
+                time.sleep(0.01)
+            peak = 0.0
+            live = sys.stdout.isatty() and not args.once and not args.show_frames
             while True:
                 reading = client.read_holding_registers(address, 2)
                 raw_value = decode_signed_int32(reading.registers, args.word_order)
-                force_value = raw_value * args.scale
+                force_value = raw_value * scale
+                peak = max(peak, abs(force_value))
                 timestamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
-                if args.unit == "raw" and args.scale == 1.0:
-                    measurement = f"force_raw={raw_value}"
-                else:
-                    measurement = (
-                        f"force={force_value:.10g} {args.unit} raw={raw_value}"
-                    )
+                measurement = f"当前力: {force_value:+.4f} {unit}  |  峰值(绝对值): {peak:.4f} {unit}"
+                if args.raw:
+                    measurement = f"原始值: {raw_value} counts"
+                if args.show_frames:
+                    measurement += f" raw={raw_value} registers={reading.registers}"
                 print(
-                    f"{timestamp} {measurement} "
-                    f"registers=[0x{reading.registers[0]:04X}, "
-                    f"0x{reading.registers[1]:04X}]",
+                    ("\r\033[2K" if live else f"{timestamp} ") + measurement,
+                    end="" if live else "\n",
                     flush=True,
                 )
                 if args.show_frames:

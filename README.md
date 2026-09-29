@@ -69,17 +69,22 @@ modbus-force-reader --list-ports
 modbus-force-reader --port /dev/ttyUSB0 --once --show-frames
 ```
 
-持续读取（默认每 100 ms 一次，按 `Ctrl+C` 停止）：
+持续读取（默认每次读取后等待 100 ms，按 `Ctrl+C` 停止）：
 
 ```bash
 modbus-force-reader --port /dev/ttyUSB0
 ```
 
+默认读取设备状态寄存器偏移 `8` 的小数位和偏移 `104` 的单位，
+将毛重转换为 **N（牛顿）**。终端同一行刷新当前力及本次运行的绝对值峰值，
+重定向输出或 `--show-frames` 时逐行输出。启动后不要同时修改设备标定或单位；修改后重启程序。
+
+例如当前设备单位为 N、小数位为 1，寄存器值 `146` 对应 `14.6 N`。
 示例输出：
 
 ```text
 Reading /dev/ttyUSB0: slave=1, baud=9600, format=8N1, channel=1, register=80 (0x0050)
-2026-09-29T14:30:00.123+08:00 force_raw=132 registers=[0x0000, 0x0084]
+当前力: +13.2000 N  |  峰值(绝对值): 13.2000 N
 ```
 
 如果设备已按 `0.001 N/计数` 标定，可仅对显示值应用倍率和单位：
@@ -89,7 +94,13 @@ modbus-force-reader --port /dev/ttyUSB0 --scale 0.001 --unit N
 ```
 
 `--scale` 和 `--unit` 只改变终端显示，不会修改传感器配置。实际物理单位和小数位必须以
-当前设备的标定设置为准；不确定时保留默认的 `raw` 输出。
+当前设备的标定设置为准。手动换算必须同时提供 `--scale` 和 `--unit`，优先于自动换算。
+自动模式遇到未设置或未知单位时会提示错误，不会猜测单位。
+若设备单位是 g、kg 或 t，使用标准重力 `9.80665 m/s²` 换算等效力。
+显示小数位不代表测量精度；实际准确性取决于设备标定。
+
+查看原始值：`modbus-force-reader --port /dev/ttyUSB0 --raw`。
+自定义寄存器须使用手动换算或 `--raw`，避免套用毛重的单位设置。
 
 多通道设备可用 `--channel`。程序按协议公式
 `80 + 500 × (通道号 - 1)` 计算每个通道的毛重寄存器：
@@ -111,6 +122,7 @@ modbus-force-reader --port /dev/ttyUSB0 --channel 6
 --interval 0.1               轮询周期（秒）
 --timeout 0.5                串口超时（秒）
 --once                       只读一次
+--raw                        显示原始计数，跳过单位查询
 --show-frames                打印十六进制收发帧
 ```
 
